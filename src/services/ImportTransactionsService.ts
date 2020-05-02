@@ -9,10 +9,6 @@ import Transaction from '../models/Transaction';
 
 import TransactionRepository from '../repositories/TransactionsRepository';
 
-interface RequestLoadTransactionDTO {
-  filePath: string;
-}
-
 interface TransactionData {
   title: string;
   type: 'income' | 'outcome';
@@ -21,13 +17,14 @@ interface TransactionData {
 }
 
 class ImportTransactionsService {
-  async execute({
-    filePath,
-  }: RequestLoadTransactionDTO): Promise<Transaction[]> {
+  async execute(filePath: string): Promise<Transaction[]> {
+    const transactionRepository = getCustomRepository(TransactionRepository);
+    const categoriesRepository = getRepository(Category);
+
     const readFileStream = createReadStream(filePath);
 
-    const parser = csvParser({ from_line: 2 });
-    const parseCSV = readFileStream.pipe(parser);
+    const parses = csvParser({ from_line: 2 });
+    const parseCSV = readFileStream.pipe(parses);
 
     const csvTransactions: TransactionData[] = [];
     const csvCategories: string[] = [];
@@ -47,21 +44,19 @@ class ImportTransactionsService {
 
     await new Promise(resolve => parseCSV.on('end', resolve));
 
-    const categoriesRepository = getRepository(Category);
-
     const existentCategories = await categoriesRepository.find({
       where: { title: In(csvCategories) },
     });
 
     const existentCategoriesTitle = existentCategories.map(
-      category => category.title,
+      (category: Category) => category.title,
     );
 
     const addCategoriesTitles = csvCategories
       .filter(category => !existentCategoriesTitle.includes(category))
       .filter((value, index, self) => self.indexOf(value) === index);
 
-    const newCategories = await categoriesRepository.create(
+    const newCategories = categoriesRepository.create(
       addCategoriesTitles.map(title => ({ title })),
     );
 
@@ -69,9 +64,7 @@ class ImportTransactionsService {
 
     const categories = [...newCategories, ...existentCategories];
 
-    const transactionRepository = getCustomRepository(TransactionRepository);
-
-    const transactions = await transactionRepository.create(
+    const transactions = transactionRepository.create(
       csvTransactions.map(({ title, type, value, category }) => ({
         title,
         type,
@@ -84,7 +77,7 @@ class ImportTransactionsService {
 
     await transactionRepository.save(transactions);
 
-    await access(filePath, async error => {
+    access(filePath, async error => {
       if (!error) {
         await promises.unlink(filePath);
       }
